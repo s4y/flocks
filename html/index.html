@@ -39,11 +39,17 @@
 }
 
 #sky > .bird {
-	width: 7px;
-	height: 10px;
+	width: 10px;
+	height: 16px;
 	border-radius: 0 0 50% 50%;
 	background: green;
 	position: absolute;
+	top: -8px;
+	left: -5px;
+}
+
+#sky > .bird.highlighted {
+	background: red;
 }
 
 </style>
@@ -58,14 +64,38 @@
 <script>
 'use strict';
 
-class Bird {
-	constructor(sky, x, y, z, yaw, tilt) {
-		this.sky = sky;
+class Position {
+	constructor(x, y, z) {
 		this.x = x;
 		this.y = y;
 		this.z = z;
-		this.yaw = yaw;
-		this.tilt = tilt;
+	}
+
+	distanceTo(p) {
+		return Math.cbrt(
+			Math.pow(this.x - p.x, 2) +
+			Math.pow(this.y - p.y, 2) +
+			Math.pow(this.z - p.z, 2)
+		);
+	}
+
+	dividedBy(n) {
+		return new Position(this.x/n, this.y/n, this.z/n);
+	}
+}
+
+class Angle {
+	constructor(elevation, azimuth) {
+		this.elevation = elevation;
+		this.azimuth = azimuth;
+	}
+}
+
+class Bird {
+	constructor(sky, position, angle) {
+		this.sky = sky;
+		this.position = position;
+		this.angle = angle;
 
 		// TODO: separate presentation
 		const el = document.createElement('div');
@@ -74,16 +104,48 @@ class Bird {
 		this.display();
 	}
 
+	closeBirds() {
+		const pos = this.position;
+		return this.sky.birds.filter(bird => bird != this && pos.distanceTo(bird.position) < 20);
+	}
+
+	desiredCloseAngle() {
+		const pos = this.position;
+		const closeBirds = this.closeBirds();
+		if (!closeBirds.length) {
+			return null;
+		}
+		const averageClosePos = closeBirds.reduce((pos, bird) => {
+			pos.x += bird.position.x;
+			pos.y += bird.position.y;
+			pos.z += bird.position.z;
+			return pos;
+		}, new Position(0, 0, 0)).dividedBy(closeBirds.length);
+		return new Angle(
+			Math.atan2(averageClosePos.z - pos.z, Math.sqrt(Math.pow(averageClosePos.x - pos.x, 2) + Math.pow(averageClosePos.y - pos.y, 2))),
+			Math.atan2(averageClosePos.x - pos.x, averageClosePos.y - pos.y)
+		);
+	}
+
 	step() {
-		this.x += Math.sin(this.yaw);
-		this.y += Math.cos(this.yaw);
-		this.z += Math.cos(this.tilt);
-		this.yaw += Math.random() / 2 - 0.25;
-		this.tilt += Math.random() / 2 - 0.25;
+		// this.angle.azimuth += Math.random() / 2 - 0.25;
+		// this.angle.elevation += Math.random() / 2 - 0.25;
+
+		this.position.x += Math.sin(this.angle.azimuth) * Math.cos(this.angle.elevation);
+		this.position.y += Math.cos(this.angle.azimuth) * Math.cos(this.angle.elevation);
+		this.position.z += Math.sin(this.angle.elevation);
+
+		const closeAngle = this.desiredCloseAngle();
+		if (closeAngle) {
+			this.angle.azimuth += (closeAngle.azimuth - this.angle.azimuth) / 16;
+			this.angle.elevation += (closeAngle.elevation - this.angle.elevation) / 64;
+		}
 	}
 
 	display() {
-		this.el.style.transform = `translate3D(${this.x}px, ${this.y}px, ${this.z}px) rotateY(${this.tilt}rad) rotate(${-this.yaw}rad)`;
+		const p = this.position;
+		const a = this.angle;
+		this.el.style.transform = `translate3D(${p.x}px, ${p.y}px, ${p.z}px) rotateZ(${-a.azimuth}rad) rotateX(${a.elevation}rad)`;
 	}
 }
 
@@ -103,26 +165,42 @@ class Sky {
 	addBird() {
 		const bird = new Bird(
 			this,
-			Math.random() * this.w,
-			Math.random() * this.h,
-			Math.random() * this.d,
-			Math.random() * Math.PI * 2,
-			Math.random() * Math.PI * 2
+			new Position(
+				Math.random() * this.w,
+				Math.random() * this.h,
+				Math.random() * this.d
+			),
+			new Angle(
+				Math.random() * Math.PI * 2,
+				Math.random() * Math.PI * 2
+			)
 		);
 		this.birds.push(bird);
 		this.el.appendChild(bird.el);
 	}
 
 	step() {
-		const pad = 0;
 		for (const bird of this.birds) {
 			bird.step();
-			if (bird.x > this.w + pad) { bird.x -= this.w + pad * 2; }
-			if (bird.x < -pad) { bird.x += this.w + pad * 2; }
-			if (bird.y > this.h + pad) { bird.y -= this.h + pad * 2; }
-			if (bird.y < -pad) { bird.y += this.h + pad * 2; }
-			if (bird.z > this.d + pad) { bird.z -= this.d + pad * 2; }
-			if (bird.z < -pad) { bird.z += this.d + pad * 2; }
+			const pos = bird.position;
+			if (
+				pos.x >= this.w || pos.x <= 0 ||
+				pos.y >= this.h || pos.y <= 0
+			) {
+				bird.angle.azimuth += Math.PI;
+			}
+			if (pos.z >= this.d || pos.z <= 0) {
+				bird.angle.elevation += Math.PI;
+			}
+
+			// bird.el.style.opacity = (
+			// 	Math.min(1, Math.abs(this.w - pos.x) / 10) *
+			// 	Math.min(1, Math.abs(pos.x) / 10) *
+			// 	Math.min(1, Math.abs(this.h - pos.y) / 10) *
+			// 	Math.min(1, Math.abs(pos.y) / 10) *
+			// 	Math.min(1, Math.abs(this.d - pos.z) / 10) *
+			// 	Math.min(1, Math.abs(pos.z) / 10)
+			// );
 		}
 		this.angle += Math.PI / 3000;
 	}
@@ -131,7 +209,7 @@ class Sky {
 		for (const bird of this.birds) {
 			bird.display();
 		}
-		this.el.style.transform = `perspective(6000px) translate(30%, 80%) rotateX(60deg) rotateZ(${this.angle}rad)`;
+		this.el.style.transform = `translate(30%, 80%) rotateX(80deg) rotateZ(${this.angle}rad)`;
 	}
 }
 
@@ -149,5 +227,17 @@ const step = () => {
 };
 
 step();
+
+// const monitorCloseBirds = () => {
+// 	for (const bird of sky.birds) {
+// 		bird.el.classList.remove('highlighted');
+// 	}
+// 	for (const bird of sky.birds[0].closeBirds()) {
+// 		bird.el.classList.add('highlighted');
+// 	}
+// 	requestAnimationFrame(monitorCloseBirds);
+// };
+// monitorCloseBirds();
+// sky.birds[0].el.style.background = 'blue';
 
 </script>
